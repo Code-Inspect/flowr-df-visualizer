@@ -1,5 +1,5 @@
 import ELK, { ElkExtendedEdge, ElkNode, LayoutOptions } from 'elkjs/lib/elk.bundled.js';
-import React, { ChangeEventHandler, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { ChangeEventHandler, useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import ReactFlow, {
   addEdge,
   Panel,
@@ -18,53 +18,29 @@ import ReactFlow, {
   NodeProps,
   getStraightPath,
   BaseEdge,
+  EdgeLabelRenderer,
+  MarkerType,
+  EdgeProps,
 } from 'reactflow';
 
 import 'reactflow/dist/style.css';
 import { VisualizationGraph } from './model/graph';
-import { HandleNodeComponent } from './model/nodes/handleNodeComponent';
+import FloatingConnectionLine, { ExitPointNode, FunctionCallNode, UseNode, ValueNode, VariableDefinitionNode } from './model/nodes/nodeDefinition';
+import ReadsEdge from './model/edges/readsEdge';
+import { edgeTagMapper } from './model/edges/edgeBase';
+import { ArgumentEdge } from './model/edges/argumentEdge';
+import { CallsEdge } from './model/edges/callsEdge';
+import { DefinedByEdge } from './model/edges/definedByEdge';
+import { DefinedByOnCallEdge } from './model/edges/definedByOnCallEdge';
+import { DefinesOnCallEdge } from './model/edges/definesOnCallEdge';
+import { RelatesEdge } from './model/edges/relatesEdge';
+import { ReturnsEdge } from './model/edges/returnsEdge';
+import { SameDefDefEdge } from './model/edges/sameDefDefEdge';
+import { SameReadReadEdge } from './model/edges/sameReadReadEdge';
+import { SideEffectOnCallEdge } from './model/edges/sideEffectOnCallEdge';
+import { NonStandardEvaluationEdge } from './model/edges/nonStandardEvaluationEdge';
 
-function VariableDefinitionNode({ data } : { readonly data: NodeProps['data'] }) {
-  return (
-    <HandleNodeComponent>
-      <div style={{ border: 'solid 2px', padding: '5px', margin: '0px' }}>
-        <label htmlFor="text">{data.label}</label>
-      </div>
-    </HandleNodeComponent>
-  );
-}
 
-function UseNode({ data } : { readonly data: NodeProps['data'] }){
-  return(
-    <HandleNodeComponent>
-      <div className='use-node'>
-        <label htmlFor="text">{data.label}</label>
-      </div>
-    </HandleNodeComponent>
-  )
-}
-
-function FunctionCallNode({ data } : { readonly data: NodeProps['data'] }){
-  return(
-    <HandleNodeComponent>
-      <div className='function-call-node label'>
-        <label htmlFor="text">{data.label}</label>
-      </div>
-    </HandleNodeComponent>
-  )
-}
-
-let idCounter = 0
-
-function ExitPointNode({ data } : { readonly data: NodeProps['data'] }) {
-  return (
-    <HandleNodeComponent>
-      <div className='exit-point-node'>
-        <label htmlFor="text">{data.label}</label>
-      </div>
-    </HandleNodeComponent>
-  );
-}
 
 const elk = new ELK();
 
@@ -103,31 +79,42 @@ const elkOptions: LayoutOptions = {
    return {
        nodes: layoutedGraph.children?.map(node => ({
          ...node,
-         data: { label: node.labels?.[0]?.text },
+         data: { label: node.labels?.[0]?.text, id: node.id, nodeType:(node as ExtendedElkNode).data.nodeType},
          // React Flow expects a position property on the node instead of `x`
          // and `y` fields.
          position: { x: node.x ?? 0, y: node.y ?? 0 },
        })) ?? [],
-       edges: (layoutedGraph.edges ?? []).map(e => {
-        const costumEdge: CostumElkExtendedEdge = e as CostumElkExtendedEdge
-         return {
+       edges: (layoutedGraph.edges as ExtendedExtendedEdge[] ?? []).map(e => { 
+        return {
            id: e.id,
            source: e.sources[0],
            target: e.targets[0],
            sourceHandle: isHorizontal ? 'right' : 'bottom',
            targetHandle: isHorizontal ? 'left' : 'top',
-           label: costumEdge.label,
-           animated: true,
-           style: { stroke: '#000' },
-           arrowHeadType: 'arrowclosed',
-           type: 'custom-edge',
-           data: { label: e.id }
+           label: e.label,
+           //animated: true,
+           //style: { stroke: '#000' },
+           //arrowHeadType: 'arrowclosed',
+           type: edgeTagMapper(e.edgeType),
+           data: { label: e.label }
          };
        })
      }
  }
 
- function convertToExtendedEdges(edges: Edge[]): CostumElkExtendedEdge[] {
+ interface ExtendedExtendedEdge extends ElkExtendedEdge{
+  edgeType: string
+  label:string
+ }
+
+ interface ExtendedElkNode extends ElkNode{
+  data:{
+    label:string, 
+    nodeType:string
+  }
+ }
+
+ function convertToExtendedEdges(edges: Edge[]): ElkExtendedEdge[] {
    return edges.map(edge => ({
      id: edge.id,
      sources: [edge.source],
@@ -137,38 +124,29 @@ const elkOptions: LayoutOptions = {
    }));
  }
 
- export default function CustomEdge({ id, sourceX, sourceY, targetX, targetY } : {
-  id: string,
-  sourceX: number,
-  sourceY: number,
-  targetX: number,
-  targetY: number
- }) {
-  const [edgePath] = getStraightPath({
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-  });
 
-  return (
-    <>
-      <BaseEdge id={id} path={edgePath} />
-    </>
-  );
+export interface LayoutFlowProps {
+  readonly graph: VisualizationGraph;
+  readonly assignGraphUpdater: (updater: (g: VisualizationGraph) => void) => void;
 }
 
- export function LayoutFlow({ graph } : { readonly graph: VisualizationGraph}) {
+ export function LayoutFlow({ graph, assignGraphUpdater } : LayoutFlowProps) {
+   const [currentGraph, setCurrentGraph] = useState(graph);
    const [nodes, setNodes, onNodesChange] = useNodesState([]);
    const [edges, setEdges, onEdgesChange] = useEdgesState([]);
    const { fitView } = useReactFlow();
+   
+   assignGraphUpdater(g =>  {
+    setCurrentGraph(g)
+    onLayout({ direction: 'DOWN', g })
+  })
 
    const onLayout = useCallback(
-     ({ direction , useInitialNodes = false } : { direction: string, useInitialNodes?: boolean }) => {
+     ({ direction , g = undefined } : { direction: string, g?: VisualizationGraph }) => {
        const opts = { 'elk.direction': direction, ...elkOptions };
-       const ns = useInitialNodes ? graph.nodes : nodes;
-       const es = useInitialNodes ? graph.edges : edges;
-
+       const ns = g ? g.nodes : nodes;
+       const es = g ? g.edges : edges;
+      
        getLayoutedElements(ns, convertToExtendedEdges(es), opts).then(({ nodes: layoutedNodes, edges: layoutedEdges }) => {
          setNodes(layoutedNodes);
          setEdges(layoutedEdges);
@@ -176,12 +154,12 @@ const elkOptions: LayoutOptions = {
          window.requestAnimationFrame(() => fitView());
        });
      },
-     [nodes, edges]
+     [nodes, edges, currentGraph]
    );
 
    // Calculate the initial layout on mount.
    useLayoutEffect(() => {
-     onLayout({ direction: 'DOWN', useInitialNodes: true });
+     onLayout({ direction: 'DOWN', g: currentGraph });
    }, []);
 
    /* allows to map custom node types */
@@ -189,15 +167,43 @@ const elkOptions: LayoutOptions = {
     variableDefinitionNode: VariableDefinitionNode,
     useNode: UseNode,
     functionCallNode: FunctionCallNode,
-    exitPointNode: ExitPointNode
+    exitPointNode: ExitPointNode,
+    valueNode: ValueNode
    }), []);
 
    /* allows to map custom edge types */
    const edgeTypes = useMemo(() => ({
-    customEdge: CustomEdge,
+    readsEdge: ReadsEdge,
+    definedByEdge: DefinedByEdge,
+    sameReadReadEdge: SameReadReadEdge,
+    sameDefDefEdge: SameDefDefEdge,
+    callsEdge: CallsEdge,
+    returnsEdge: ReturnsEdge,
+    definesOnCallEdge: DefinesOnCallEdge,
+    definedByOnCallEdge: DefinedByOnCallEdge,
+    argumentEdge: ArgumentEdge,
+    sideEffectOnCallEdge: SideEffectOnCallEdge,
+    relatesEdge: RelatesEdge,
+    nonStandardEvaluationEdge: NonStandardEvaluationEdge
   }),[])
 
    return (
+    <>
+      <svg style={{ position: 'absolute', top: 0, left: 0 }}>
+        <defs>
+        <marker
+          id="triangle"
+          viewBox="0 0 10 10"
+          refX="1"
+          refY="5"
+          markerUnits="strokeWidth"
+          markerWidth="10"
+          markerHeight="10"
+          orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="black" />
+    </marker>
+        </defs>
+      </svg>
      <ReactFlow
        nodes={nodes}
        edges={edges}
@@ -206,16 +212,14 @@ const elkOptions: LayoutOptions = {
        onNodesChange={onNodesChange}
        onEdgesChange={onEdgesChange}
        proOptions={{hideAttribution: true}}
+       connectionLineComponent={FloatingConnectionLine}
        fitView
      >
       <Background />
       <MiniMap />
       <Controls />
      </ReactFlow>
+     </>
    );
  }
 
- interface CostumElkExtendedEdge extends ElkExtendedEdge{
-  label: string
-  edgeType: string
- }

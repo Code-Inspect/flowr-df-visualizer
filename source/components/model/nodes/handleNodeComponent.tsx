@@ -1,4 +1,4 @@
-import { Handle, Position } from "reactflow";
+import { Handle, NodeProps, Position } from "reactflow";
 
 export interface HandleNodeComponentProps {
    targetBackgroundColor: string
@@ -11,3 +11,4 @@ export function HandleNodeComponent(props : React.PropsWithChildren) {
       <Handle type="source" position={Position.Bottom} isConnectable={false} className="node-handle" />
    </>)
 }
+
